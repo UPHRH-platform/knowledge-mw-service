@@ -18,6 +18,11 @@ module.exports = function (app) {
       requestMiddleware.createAndValidateRequestBody, filterMiddleware.addMetaFilters,
       contentService.searchContentAPI)
 
+  app.route(BASE_URL + '/searchWrapper')
+    .post(healthService.checkDependantServiceHealth(dependentServiceHealth),
+      requestMiddleware.createAndValidateRequestBody, filterMiddleware.addMetaFilters,
+      contentService.searchWrapperAPI)
+
   app.route(BASE_URL + '/create')
     .post(healthService.checkDependantServiceHealth(dependentServiceHealth),
       requestMiddleware.gzipCompression(),
