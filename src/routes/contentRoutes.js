@@ -32,7 +32,8 @@ module.exports = function (app) {
     .patch(healthService.checkDependantServiceHealth(dependentServiceHealth),
       requestMiddleware.gzipCompression(),
       requestMiddleware.createAndValidateRequestBody, requestMiddleware.validateToken,
-      requestMiddleware.apiAccessForCreatorUser, contentService.updateContentAPI)
+      requestMiddleware.apiAccessForCreatorUser, requestMiddleware.validateFracMapping,
+      contentService.updateContentAPI)
 
   app.route(BASE_URL + '/upload/:contentId')
     .post(healthService.checkDependantServiceHealth(dependentServiceHealth),

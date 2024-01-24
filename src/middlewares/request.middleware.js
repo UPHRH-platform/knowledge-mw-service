@@ -15,6 +15,9 @@ var lodash = require('lodash')
 var configUtil = require('sb-config-util')
 var compression = require('compression')
 
+var CacheManager = require('sb_cache_manager')
+var cacheManager = new CacheManager({})
+
 var keyCloakConfig = {
   'authServerUrl': process.env.sunbird_keycloak_auth_server_url ? process.env.sunbird_keycloak_auth_server_url : 'https://staging.open-sunbird.org/auth',
   'realm': process.env.sunbird_keycloak_realm ? process.env.sunbird_keycloak_realm : 'sunbird',
@@ -471,6 +474,120 @@ function seteTextbook (req, res, next) {
   next()
 }
 
+// Add console.log statements for debugging
+// Utility function to get difficulty levels for a specific subject
+function getDifficultyLevelsForSubject (categories, subjectCode) {
+  const subjectCategory = categories.find(cat => cat.code === 'subject' && cat.terms.some(term => term.code === subjectCode));
+  return subjectCategory ? subjectCategory.terms
+    .filter(term => term.associations && term.associations.length > 0)
+    .map(term => term.associations.map(assoc => assoc.code))
+    .flat() : [];
+}
+
+// Utility function to check if subjects and difficulty levels are valid
+function isValidSubjectsAndLevels(subjects, difficultyLevels, framework) {
+  const subjectCodes = subjects;
+  const difficultyLevelCodes = difficultyLevels;
+
+  console.log("Subject Codes:", subjectCodes);
+  console.log("Difficulty Level Codes:", difficultyLevelCodes);
+
+  // Check each subject
+  for (const subjectCode of subjectCodes) {
+    const associatedDifficultyLevels = getDifficultyLevelsForSubject(framework.categories, subjectCode);
+
+    // Check if all specified difficulty levels are associated with the subject
+    if (!arrayContainsAll(difficultyLevelCodes, associatedDifficultyLevels)) {
+      console.error('Invalid subject or difficulty level:', subjectCode, difficultyLevelCodes);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Utility function to check if an array contains all elements of another array
+function arrayContainsAll(sourceArray, checkArray) {
+  return checkArray.every(val => sourceArray.includes(val));
+}
+
+// Utility function to check if framework details are valid
+function isValidFrameworkDetails(frameworkDetails) {
+  return (
+    frameworkDetails &&
+    frameworkDetails.result &&
+    frameworkDetails.result.framework
+  );
+}
+
+// Utility function to get names from categories based on category type
+function getNamesFromCategories(categories, categoryType) {
+  const category = categories.find(cat => cat.name === categoryType);
+  return category ? category.terms.map(term => term.name) : [];
+}
+
+// Main validation function
+function validateFracMapping(req, res, next) {
+  console.log("Entered validateFracMapping");
+
+  const subjects = req.body.request.content.subject || [];
+  let difficultyLevels = req.body.request.content.difficultyLevel || [];
+
+  // Ensure difficultyLevels is an array
+  if (!Array.isArray(difficultyLevels)) {
+    difficultyLevels = [difficultyLevels];
+  }
+
+  getFrameworkDetails(req, function (err, frameworkDetails) {
+    if (err || !isValidFrameworkDetails(frameworkDetails)) {
+      console.error('Failed to fetch or invalid framework details:', err);
+      return res.status(500).json({ error: 'Failed to fetch framework details' });
+    }
+
+    const framework = frameworkDetails.result.framework;
+
+    console.log("Framework Details:", framework);
+
+    if (!isValidSubjectsAndLevels(subjects, difficultyLevels, framework)) {
+      console.error('Invalid subject or difficulty level:', subjects, difficultyLevels);
+      return res.status(400).json({ error: 'Invalid subject or difficulty level' });
+    }
+
+    console.log("Exiting successfully validateFracMapping");
+    next();
+  });
+}
+
+
+
+function getFrameworkDetails (req, CBW) {
+  cacheManager.get(req.query.framework, function (err, data) {
+    if (err || !data) {
+      contentProvider.getFrameworkById(req.query.framework, '', req.headers, function (err, result) {
+        if (err || result.responseCode !== responseCode.SUCCESS) {
+          logger.error({ msg: `Fetching framework data failed ${lodash.get(req.query, 'framework')}`, err }, req)
+          CBW(new Error('Fetching framework data failed'), null)
+        } else {
+          logger.debug({ msg: `Fetching framework data success ${lodash.get(req.query, 'framework')}` }, req)
+          cacheManager.set({ key: req.query.framework, value: result },
+            function (err, data) {
+              if (err) {
+                logger.error({
+                  msg: `Setting framework cache data failed ${lodash.get(req.query, 'framework')}`, err
+                }, req)
+              } else {
+                logger.debug({ msg: `Setting framework cache data success ${lodash.get(req.query, 'framework')}` }, req)
+              }
+            })
+          CBW(null, result)
+        }
+      })
+    } else {
+      CBW(null, data)
+    }
+  })
+}
+
 // Exports required function
 module.exports.validateToken = validateToken
 module.exports.createAndValidateRequestBody = createAndValidateRequestBody
@@ -481,3 +598,4 @@ module.exports.checkChannelID = checkChannelID
 module.exports.validateUserToken = validateUserToken
 module.exports.gzipCompression = gzipCompression
 module.exports.seteTextbook = seteTextbook
+module.exports.validateFracMapping = validateFracMapping
