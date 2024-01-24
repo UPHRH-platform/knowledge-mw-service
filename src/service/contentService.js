@@ -54,6 +54,122 @@ function getContentTypeForContent () {
   return contentMessage.CONTENT_TYPE
 }
 
+function searchWrapperAPI (req, response) {
+  var data = req.body
+  var rspObj = req.rspObj || {}
+  console.log('Testing')
+  if (!data.request || !data.request.filters) {
+    rspObj.errCode = contentMessage.SEARCH.MISSING_CODE
+    rspObj.errMsg = contentMessage.SEARCH.MISSING_MESSAGE
+    rspObj.responseCode = responseCode.CLIENT_ERROR
+    logger.error({
+      msg: 'Error due to required request || request.filters are missing',
+      err: {
+        errCode: rspObj.errCode,
+        errMsg: rspObj.errMsg,
+        responseCode: rspObj.responseCode
+      },
+      additionalInfo: { data }
+    }, req)
+
+    return response.status(400).send(respUtil.errorResponse(rspObj))
+  }
+
+  // Check if se_boards, se_medium, and se_gradeLevel are present in the filters
+  if (data.request.filters.se_boards || data.request.filters.se_mediums || data.request.filters.se_gradeLevels) {
+    // Perform framework read with the provided framework ID
+    getFrameworkDetails(req, function (err, frameworkData) {
+      if (err || frameworkData.responseCode !== responseCode.SUCCESS) {
+        logger.error({
+          msg: `Framework API failed with framework - ${req.query.framework}`,
+          err
+        }, req)
+        rspObj.result = frameworkData.result
+        return response.status(200).send(respUtil.successResponse(rspObj))
+      } else {
+        // Check for se_boards, se_medium, and se_gradeLevel in the frameworkData
+        if (frameworkData.result.framework.categories) {
+          // Set a default value if se_boards is null
+          const seBoards = (data.request.filters.se_boards && data.request.filters.se_boards.length > 0) ? data.request.filters.se_boards[0] : '' // eslint-disable-line max-len
+          // const seMediums = (data.request.filters.se_mediums && data.request.filters.se_mediums.length > 0) ? data.request.filters.se_mediums[0] : ''// eslint-disable-line max-len
+          // const seGradeLevels = (data.request.filters.se_gradeLevels && data.request.filters.se_gradeLevels.length > 0) ? data.request.filters.se_gradeLevels[0] : ''// eslint-disable-line max-len
+          const seSubjects = (data.request.filters.se_subjects && data.request.filters.se_subjects.length > 0) ? data.request.filters.se_subjects[0] : ''// eslint-disable-line max-len
+          const seDifficultyLevels = (data.request.filters.se_difficultyLevels && data.request.filters.se_difficultyLevels.length > 0) ? data.request.filters.se_difficultyLevels[0] : ''// eslint-disable-line max-len
+
+          // Find the category in the framework data that matches se_boards
+          const boardCategory = frameworkData.result.framework.categories.find(category => category.name || category.name.toLowerCase() === seBoards.toLowerCase()) // eslint-disable-line max-len
+          if (boardCategory) {
+            // Now, you can iterate through the terms in the boardCategory and collect the associations
+            const associations = []
+            boardCategory.terms.forEach(term => {
+              if (term.associations) {
+                associations.push(...term.associations)
+              }
+            })
+
+            // Now 'associations' array contains all the associations for the given se_boards
+            // Next, you can filter associations based on difficultyLevel and subject
+            const filteredAssociations = associations.filter(association => {
+              // Check for difficultyLevel and subject
+              const isDifficultyLevelMatch = (
+                !seDifficultyLevels ||
+                (association.category === 'difficultyLevel' && association.code === seDifficultyLevels)
+              )
+
+              const isSubjectMatch = (
+                !seSubjects ||
+                (association.category === 'subject' && association.code === seSubjects)
+              )
+
+              return isDifficultyLevelMatch || isSubjectMatch
+            })
+            // Now 'filteredAssociations' contains the filtered associations based on se_difficultyLevel and se_subject
+
+            // You can use these associations to construct the mappings for se_subject and se_difficultyLevel
+            const mappedSubjects = filteredAssociations.filter(association => association.category === 'subject').map(subject => subject.code) // eslint-disable-line max-len
+            const mappedDifficultyLevels = filteredAssociations.filter(association => association.category === 'difficultyLevel').map(difficultyLevel => difficultyLevel.code) // eslint-disable-line max-len
+
+            // Now 'mappedSubjects' and 'mappedDifficultyLevels' contain the mappings for se_subject and se_difficultyLevel
+
+            // Update your request data with these mappings before calling searchContent
+            data.request.filters.se_subject = mappedSubjects
+            data.request.filters.se_difficultyLevel = mappedDifficultyLevels
+
+            // Call searchContent with the updated data
+            return search(getContentTypeForContent(), req, response, ['Content', 'QuestionSet'])
+          } else {
+            // Handle the case where boardCategory is not found
+            handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.CATEGORY_NOT_FOUND)
+          }
+        } else {
+          // Handle the case where frameworkData doesn't contain the expected categories
+          handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.NO_CATEGORIES)
+        }
+      }
+    })
+  } else {
+    // If only se_subject or se_difficultyLevel is passed, call searchContent directly
+    return search(getContentTypeForContent(), req, response, ['Content', 'QuestionSet'])
+  }
+
+  function handleFrameworkError (req, response, rspObj, errorMessage) {
+    rspObj.errCode = contentMessage.FRAMEWORK_READ.FAILED_CODE
+    rspObj.errMsg = errorMessage
+    rspObj.responseCode = responseCode.SERVER_ERROR
+
+    logger.error({
+      msg: 'Framework read response does not contain expected categories',
+      err: {
+        errCode: rspObj.errCode,
+        errMsg: rspObj.errMsg,
+        responseCode: rspObj.responseCode
+      }
+    }, req)
+
+    return response.status(500).send(respUtil.errorResponse(rspObj))
+  }
+}
+
 function searchAPI (req, response) {
   return search(compositeMessage.CONTENT_TYPE, req, response)
 }
@@ -65,7 +181,7 @@ function searchContentAPI (req, response) {
 function search (defaultContentTypes, req, response, objectType) {
   var data = req.body
   var rspObj = req.rspObj
-
+  console.log('data: ' + JSON.stringify(data))
   logger.debug({
     msg: 'contentService.search() called', additionalInfo: { rspObj }
   }, req)
@@ -1750,8 +1866,8 @@ function copyContentAPI (req, response) {
   data.contentId = req.params.contentId
   var rspObj = req.rspObj
   var query = {}
-  if (req.query){
-    query = req.query;
+  if (req.query) {
+    query = req.query
   }
 
   logger.debug({
@@ -1898,8 +2014,10 @@ function searchPluginsAPI (req, response, objectType) {
       rspObj.result = res.result
       logger.debug({
         msg: 'Content searched successfully',
-        additionalInfo: { count: lodash.get(rspObj.result, 'count')
-        }}, req)
+        additionalInfo: {
+          count: lodash.get(rspObj.result, 'count')
+        }
+      }, req)
       return response.status(200).send(respUtil.successResponse(rspObj))
     }
   ])
@@ -1908,7 +2026,7 @@ function searchPluginsAPI (req, response, objectType) {
 function validateContentLock (req, response) {
   var rspObj = req.rspObj
   var userId = req.get('x-authenticated-userid')
-  var isRootOrgAdmin = lodash.has(req.body.request, "isRootOrgAdmin") ? req.body.request.isRootOrgAdmin : false
+  var isRootOrgAdmin = lodash.has(req.body.request, 'isRootOrgAdmin') ? req.body.request.isRootOrgAdmin : false
   logger.debug({ msg: 'contentService.validateContentLock() called', additionalInfo: { rspObj } }, req)
   var qs = {
     mode: 'edit'
@@ -1953,6 +2071,7 @@ function validateContentLock (req, response) {
 }
 
 module.exports.searchAPI = searchAPI
+module.exports.searchWrapperAPI = searchWrapperAPI
 module.exports.searchContentAPI = searchContentAPI
 module.exports.createContentAPI = createContentAPI
 module.exports.updateContentAPI = updateContentAPI

@@ -80,6 +80,12 @@ exports.CONTENT = {
     FAILED_MESSAGE: 'Search content failed'
   },
 
+  FRAMEWORK_READ: {
+    CATEGORY_NOT_FOUND: 'Category not found in framework data',
+    NO_CATEGORIES: 'Framework data does not contain expected categories',
+    FAILED_CODE: 'Failed to read framework data'
+  },
+
   CREATE: {
     MISSING_CODE: 'ERR_CONTENT_CREATE_FIELDS_MISSING',
     MISSING_MESSAGE: 'Required fields for create content are missing',

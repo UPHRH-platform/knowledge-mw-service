@@ -18,6 +18,11 @@ module.exports = function (app) {
       requestMiddleware.createAndValidateRequestBody, filterMiddleware.addMetaFilters,
       contentService.searchContentAPI)
 
+  app.route(BASE_URL + '/searchWrapper')
+    .post(healthService.checkDependantServiceHealth(dependentServiceHealth),
+      requestMiddleware.createAndValidateRequestBody, filterMiddleware.addMetaFilters,
+      contentService.searchWrapperAPI)
+
   app.route(BASE_URL + '/create')
     .post(healthService.checkDependantServiceHealth(dependentServiceHealth),
       requestMiddleware.gzipCompression(),
@@ -27,7 +32,8 @@ module.exports = function (app) {
     .patch(healthService.checkDependantServiceHealth(dependentServiceHealth),
       requestMiddleware.gzipCompression(),
       requestMiddleware.createAndValidateRequestBody, requestMiddleware.validateToken,
-      requestMiddleware.apiAccessForCreatorUser, contentService.updateContentAPI)
+      requestMiddleware.apiAccessForCreatorUser, requestMiddleware.validateFracMapping,
+      contentService.updateContentAPI)
 
   app.route(BASE_URL + '/upload/:contentId')
     .post(healthService.checkDependantServiceHealth(dependentServiceHealth),
