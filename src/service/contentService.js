@@ -54,119 +54,95 @@ function getContentTypeForContent () {
   return contentMessage.CONTENT_TYPE
 }
 
-function searchWrapperAPI (req, response) {
+function searchWrapperAPI(req, response) {
   var data = req.body
   var rspObj = req.rspObj || {}
   console.log('Testing')
   if (!data.request || !data.request.filters) {
-    rspObj.errCode = contentMessage.SEARCH.MISSING_CODE
-    rspObj.errMsg = contentMessage.SEARCH.MISSING_MESSAGE
-    rspObj.responseCode = responseCode.CLIENT_ERROR
-    logger.error({
-      msg: 'Error due to required request || request.filters are missing',
-      err: {
-        errCode: rspObj.errCode,
-        errMsg: rspObj.errMsg,
-        responseCode: rspObj.responseCode
-      },
-      additionalInfo: { data }
-    }, req)
-
-    return response.status(400).send(respUtil.errorResponse(rspObj))
-  }
-
-  // Check if se_boards, se_medium, and se_gradeLevel are present in the filters
-  if (data.request.filters.se_boards || data.request.filters.se_mediums || data.request.filters.se_gradeLevels) {
-    // Perform framework read with the provided framework ID
-    getFrameworkDetails(req, function (err, frameworkData) {
-      if (err || frameworkData.responseCode !== responseCode.SUCCESS) {
-        logger.error({
-          msg: `Framework API failed with framework - ${req.query.framework}`,
-          err
-        }, req)
-        rspObj.result = frameworkData.result
-        return response.status(200).send(respUtil.successResponse(rspObj))
-      } else {
-        // Check for se_boards, se_medium, and se_gradeLevel in the frameworkData
-        if (frameworkData.result.framework.categories) {
-          // Set a default value if se_boards is null
-          const seBoards = (data.request.filters.se_boards && data.request.filters.se_boards.length > 0) ? data.request.filters.se_boards[0] : '' // eslint-disable-line max-len
-          // const seMediums = (data.request.filters.se_mediums && data.request.filters.se_mediums.length > 0) ? data.request.filters.se_mediums[0] : ''// eslint-disable-line max-len
-          // const seGradeLevels = (data.request.filters.se_gradeLevels && data.request.filters.se_gradeLevels.length > 0) ? data.request.filters.se_gradeLevels[0] : ''// eslint-disable-line max-len
-          const seSubjects = (data.request.filters.se_subjects && data.request.filters.se_subjects.length > 0) ? data.request.filters.se_subjects[0] : ''// eslint-disable-line max-len
-          const seDifficultyLevels = (data.request.filters.se_difficultyLevels && data.request.filters.se_difficultyLevels.length > 0) ? data.request.filters.se_difficultyLevels[0] : ''// eslint-disable-line max-len
-
-          // Find the category in the framework data that matches se_boards
-          const boardCategory = frameworkData.result.framework.categories.find(category => category.name || category.name.toLowerCase() === seBoards.toLowerCase()) // eslint-disable-line max-len
-          if (boardCategory) {
-            // Now, you can iterate through the terms in the boardCategory and collect the associations
-            const associations = []
-            boardCategory.terms.forEach(term => {
-              if (term.associations) {
-                associations.push(...term.associations)
-              }
-            })
-
-            // Now 'associations' array contains all the associations for the given se_boards
-            // Next, you can filter associations based on difficultyLevel and subject
-            const filteredAssociations = associations.filter(association => {
-              // Check for difficultyLevel and subject
-              const isDifficultyLevelMatch = (
-                !seDifficultyLevels ||
-                (association.category === 'difficultyLevel' && association.code === seDifficultyLevels)
-              )
-
-              const isSubjectMatch = (
-                !seSubjects ||
-                (association.category === 'subject' && association.code === seSubjects)
-              )
-
-              return isDifficultyLevelMatch || isSubjectMatch
-            })
-            // Now 'filteredAssociations' contains the filtered associations based on se_difficultyLevel and se_subject
-
-            // You can use these associations to construct the mappings for se_subject and se_difficultyLevel
-            const mappedSubjects = filteredAssociations.filter(association => association.category === 'subject').map(subject => subject.code) // eslint-disable-line max-len
-            const mappedDifficultyLevels = filteredAssociations.filter(association => association.category === 'difficultyLevel').map(difficultyLevel => difficultyLevel.code) // eslint-disable-line max-len
-
-            // Now 'mappedSubjects' and 'mappedDifficultyLevels' contain the mappings for se_subject and se_difficultyLevel
-
-            // Update your request data with these mappings before calling searchContent
-            data.request.filters.se_subject = mappedSubjects
-            data.request.filters.se_difficultyLevel = mappedDifficultyLevels
-
-            // Call searchContent with the updated data
-            return search(getContentTypeForContent(), req, response, ['Content', 'QuestionSet'])
-          } else {
-            // Handle the case where boardCategory is not found
-            handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.CATEGORY_NOT_FOUND)
-          }
-        } else {
-          // Handle the case where frameworkData doesn't contain the expected categories
-          handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.NO_CATEGORIES)
-        }
-      }
-    })
+    handleMissingFilters(req, response, rspObj)
   } else {
-    // If only se_subject or se_difficultyLevel is passed, call searchContent directly
-    return search(getContentTypeForContent(), req, response, ['Content', 'QuestionSet'])
+    handleFrameworkAndCategories(req, response, data, rspObj);
+  }
+}
+
+function handleMissingFilters(req, response, rspObj) {
+  rspObj.errCode = contentMessage.SEARCH.MISSING_CODE
+  rspObj.errMsg = contentMessage.SEARCH.MISSING_MESSAGE
+  rspObj.responseCode = responseCode.CLIENT_ERROR
+
+  logger.error({
+    msg: 'Error due to required request || request.filters are missing',
+    err: {
+      errCode: rspObj.errCode,
+      errMsg: rspObj.errMsg,
+      responseCode: rspObj.responseCode
+    },
+    additionalInfo: { data }
+  }, req)
+
+  return response.status(400).send(respUtil.errorResponse(rspObj))
+}
+
+function searchContent(req, response, data, rspObj) {
+  search(getContentTypeForContent(), req, response, ['Content', 'QuestionSet']);
+}
+
+function handleFrameworkError(req, response, rspObj, errorMessage) {
+  rspObj.errCode = contentMessage.FRAMEWORK_READ.FAILED_CODE
+  rspObj.errMsg = errorMessage
+  rspObj.responseCode = responseCode.SERVER_ERROR
+
+  logger.error({
+    msg: 'Framework read response does not contain expected categories',
+    err: {
+      errCode: rspObj.errCode,
+      errMsg: rspObj.errMsg,
+      responseCode: rspObj.responseCode
+    }
+  }, req)
+
+  return response.status(500).send(respUtil.errorResponse(rspObj))
+}
+
+function processFrameworkData(req, response, data, frameworkData, rspObj) {
+  if (frameworkData.framework.categories) {
+    const seBoards = (data.request.filters.se_boards && data.request.filters.se_boards.length > 0)
+      ? data.request.filters.se_boards[0] : '';
+
+    const associations = extractAssociationsFromFramework(frameworkData);
+
+    const filteredAssociations = filterAssociations(associations, data.request.filters);
+
+    const mappedSubjects = extractMappedCategories(filteredAssociations, 'subject');
+    const mappedDifficultyLevels = extractMappedCategories(filteredAssociations, 'difficultyLevel');
+
+    updateRequestData(data, mappedSubjects, mappedDifficultyLevels);
+
+    searchContent(req, response, data, rspObj);
+  } else {
+    handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.NO_CATEGORIES);
+  }
+}
+
+function extractMappedCategories(associations, categoryType) {
+  // Implement logic to extract mapped categories based on categoryType
+  return associations
+    .filter(association => association.category === categoryType)
+    .map(category => category.code);
+}
+
+function updateRequestData(data, mappedSubjects, mappedDifficultyLevels) {
+  // Implement logic to update request data with mapped categories
+  if (!data.request.filters) {
+    data.request.filters = {};
   }
 
-  function handleFrameworkError (req, response, rspObj, errorMessage) {
-    rspObj.errCode = contentMessage.FRAMEWORK_READ.FAILED_CODE
-    rspObj.errMsg = errorMessage
-    rspObj.responseCode = responseCode.SERVER_ERROR
+  if (mappedSubjects.length > 0) {
+    data.request.filters.se_subject = mappedSubjects;
+  }
 
-    logger.error({
-      msg: 'Framework read response does not contain expected categories',
-      err: {
-        errCode: rspObj.errCode,
-        errMsg: rspObj.errMsg,
-        responseCode: rspObj.responseCode
-      }
-    }, req)
-
-    return response.status(500).send(respUtil.errorResponse(rspObj))
+  if (mappedDifficultyLevels.length > 0) {
+    data.request.filters.se_difficultyLevel = mappedDifficultyLevels;
   }
 }
 
@@ -178,66 +154,143 @@ function searchContentAPI (req, response) {
   return search(getContentTypeForContent(), req, response, ['Content', 'QuestionSet'])
 }
 
-function search (defaultContentTypes, req, response, objectType) {
-  var data = req.body
-  var rspObj = req.rspObj
-  console.log('data: ' + JSON.stringify(data))
+function search(defaultContentTypes, req, response, objectType) {
+  var data = req.body;
+  var rspObj = req.rspObj;
+  console.log('data: ' + JSON.stringify(data));
   logger.debug({
-    msg: 'contentService.search() called', additionalInfo: { rspObj }
-  }, req)
+    msg: 'contentService.search() called',
+    additionalInfo: { rspObj },
+  }, req);
 
   if (!data.request || !data.request.filters) {
-    rspObj.errCode = contentMessage.SEARCH.MISSING_CODE
-    rspObj.errMsg = contentMessage.SEARCH.MISSING_MESSAGE
-    rspObj.responseCode = responseCode.CLIENT_ERROR
+    rspObj.errCode = contentMessage.SEARCH.MISSING_CODE;
+    rspObj.errMsg = contentMessage.SEARCH.MISSING_MESSAGE;
+    rspObj.responseCode = responseCode.CLIENT_ERROR;
 
     logger.error({
       msg: 'Error due to required request || request.filters are missing',
       err: {
         errCode: rspObj.errCode,
         errMsg: rspObj.errMsg,
-        responseCode: rspObj.responseCode
+        responseCode: rspObj.responseCode,
       },
-      additionalInfo: { data }
-    }, req)
+      additionalInfo: { data },
+    }, req);
 
-    return response.status(400).send(respUtil.errorResponse(rspObj))
+    return response.status(400).send(respUtil.errorResponse(rspObj));
   }
 
   if (!data.request.filters) {
-    data.request.filters.contentType = defaultContentTypes
+    data.request.filters.contentType = defaultContentTypes;
   }
 
-  // if fields exists it has to be sent as array to lp
+  // if fields exist, they have to be sent as an array to lp
   if (req.query.fields) {
-    data.request.fields = req.query.fields.split(',')
-  }
-  if (objectType) {
-    data.request.filters.objectType = objectType
-  }
-  //    if(!data.request.filters.mimeType) {
-  //        data.request.filters.mimeType = getMimeTypeForContent();
-  //    }
-
-  var ekStepReqData = {
-    request: data.request
+    data.request.fields = req.query.fields.split(',');
   }
 
   async.waterfall([
+    function (CBW) {
+      if (shouldDoFrameworkRead(data.request.filters)) {
+        performFrameworkRead(req, response, rspObj, data, defaultContentTypes, objectType, CBW);
+      } else {
+        performCompositeSearch(req, response, rspObj, data, defaultContentTypes, objectType, CBW);
+      }
+    },
+    function (res, CBW) {
+      licenseHelper.includeLicenseDetails(req, res, CBW);
+    },
+    function (res) {
+      rspObj.result = res.result;
+      logger.debug({
+        msg: `Content searched successfully with ${lodash.get(rspObj.result, 'count')}`,
+        additionalInfo: {
+          contentCount: lodash.get(rspObj.result, 'count'),
+        }
+      }, req);
 
+      return response.status(200).send(respUtil.successResponse(rspObj));
+    }
+  ]);
+}
+// Helper function to perform framework read and prepare request data
+function performFrameworkRead(req, response, rspObj, data, defaultContentTypes, objectType) {
+  getFrameworkDetails(req, function (err, frameworkData) {
+    if (err || frameworkData.responseCode !== responseCode.SUCCESS) {
+      logger.error({
+        msg: `Framework API failed with framework - ${req.query.framework}`,
+        err,
+      }, req);
+      rspObj.result = frameworkData.result;
+      return response.status(200).send(respUtil.successResponse(rspObj));
+    } else {
+      prepareRequestDataAndSearch(
+        req,
+        response,
+        rspObj,
+        data,
+        defaultContentTypes,
+        objectType,
+        frameworkData
+      );
+    }
+  });
+}
+
+// Helper function to prepare request data and perform composite search
+function prepareRequestDataAndSearch(req, response, rspObj, data, defaultContentTypes, objectType, frameworkData) {
+  // Your existing logic to prepare request data using frameworkData
+  if (frameworkData.result.framework.categories) {
+    // Set a default value if se_boards is null
+    const seBoards = (data.request.filters.se_boards && data.request.filters.se_boards.length > 0) ? data.request.filters.se_boards[0] : '';
+
+    // Find the category in the framework data that matches se_boards
+    const boardCategory = frameworkData.result.framework.categories.find(category => category.name || category.name.toLowerCase() === seBoards.toLowerCase());
+
+    if (boardCategory) {
+      // Your existing logic to process boardCategory, collect associations, and filter associations
+
+      // Update your request data with these mappings before calling searchContent
+      data.request.filters.se_subject = mappedSubjects;
+      data.request.filters.se_difficultyLevel = mappedDifficultyLevels;
+
+      // Call searchContent with the updated data
+      return searchContent(
+        getContentTypeForContent(),
+        req,
+        response,
+        ['Content', 'QuestionSet']
+      );
+    } else {
+      // Handle the case where boardCategory is not found
+      handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.CATEGORY_NOT_FOUND);
+    }
+  } else {
+    // Handle the case where frameworkData doesn't contain the expected categories
+    handleFrameworkError(req, response, rspObj, contentMessage.FRAMEWORK_READ.NO_CATEGORIES);
+  }
+}
+
+// Helper function to perform composite search
+function performCompositeSearch(req, response, rspObj, data, defaultContentTypes, objectType) {
+  // Your existing logic to perform composite search without framework processing
+
+  async.waterfall([
     function (CBW) {
       logger.debug({
         msg: 'Request to content provider to search the content',
         additionalInfo: {
           body: ekStepReqData
         }
-      }, req)
+      }, req);
 
-      contentProvider.compositeSearch(ekStepReqData, req.headers, function (err, res) {
+      contentProvider.compositeSearch(data, req.headers, function (err, res) {
         if (err || res.responseCode !== responseCode.SUCCESS) {
-          rspObj.errCode = res && res.params ? res.params.err : contentMessage.SEARCH.FAILED_CODE
-          rspObj.errMsg = res && res.params ? res.params.errmsg : contentMessage.SEARCH.FAILED_MESSAGE
-          rspObj.responseCode = res && res.responseCode ? res.responseCode : responseCode.SERVER_ERROR
+          rspObj.errCode = res && res.params ? res.params.err : contentMessage.SEARCH.FAILED_CODE;
+          rspObj.errMsg = res && res.params ? res.params.errmsg : contentMessage.SEARCH.FAILED_MESSAGE;
+          rspObj.responseCode = res && res.responseCode ? res.responseCode : responseCode.SERVER_ERROR;
+
           logger.error({
             msg: 'Getting error from content provider composite search',
             err: {
@@ -246,49 +299,55 @@ function search (defaultContentTypes, req, response, objectType) {
               errMsg: rspObj.errMsg,
               responseCode: rspObj.responseCode
             },
-            additionalInfo: { ekStepReqData }
-          }, req)
-          var httpStatus = res && res.statusCode >= 100 && res.statusCode < 600 ? res.statusCode : 500
-          rspObj.result = res && res.result ? res.result : {}
-          rspObj = utilsService.getErrorResponse(rspObj, res)
-          return response.status(httpStatus).send(respUtil.errorResponse(rspObj))
+            additionalInfo: { ekStepReqData: data }
+          }, req);
+
+          var httpStatus = res && res.statusCode >= 100 && res.statusCode < 600 ? res.statusCode : 500;
+          rspObj.result = res && res.result ? res.result : {};
+          rspObj = utilsService.getErrorResponse(rspObj, res);
+
+          return response.status(httpStatus).send(respUtil.errorResponse(rspObj));
         } else {
           if (req.query.framework && req.query.framework !== 'null') {
             getFrameworkDetails(req, function (err, data) {
               if (err || res.responseCode !== responseCode.SUCCESS) {
-                logger.error({ msg: `Framework API failed with framework - ${req.query.framework}`, err }, req)
-                rspObj.result = res.result
-                return response.status(200).send(respUtil.successResponse(rspObj))
+                logger.error({ msg: `Framework API failed with framework - ${req.query.framework}`, err }, req);
+                rspObj.result = res.result;
+
+                return response.status(200).send(respUtil.successResponse(rspObj));
               } else {
-                var language = req.query.lang ? req.query.lang : 'en'
+                var language = req.query.lang ? req.query.lang : 'en';
+
                 if (lodash.get(res, 'result.facets') &&
                   lodash.get(data, 'result.framework.categories')) {
-                  modifyFacetsData(res.result.facets, data.result.framework.categories, language)
+                  modifyFacetsData(res.result.facets, data.result.framework.categories, language);
                 }
-                orgHelper.includeOrgDetails(req, res, CBW)
+
+                orgHelper.includeOrgDetails(req, res, CBW);
               }
-            })
+            });
           } else {
-            orgHelper.includeOrgDetails(req, res, CBW)
+            orgHelper.includeOrgDetails(req, res, CBW);
           }
         }
-      })
+      });
     },
     function (res, CBW) {
-      licenseHelper.includeLicenseDetails(req, res, CBW)
+      licenseHelper.includeLicenseDetails(req, res, CBW);
     },
     function (res) {
-      rspObj.result = res.result
+      rspObj.result = res.result;
+
       logger.debug({
         msg: `Content searched successfully with ${lodash.get(rspObj.result, 'count')}`,
         additionalInfo: {
           contentCount: lodash.get(rspObj.result, 'count')
         }
-      }, req)
+      }, req);
 
-      return response.status(200).send(respUtil.successResponse(rspObj))
+      return response.status(200).send(respUtil.successResponse(rspObj));
     }
-  ])
+  ]);
 }
 
 function getFrameworkDetails (req, CBW) {
