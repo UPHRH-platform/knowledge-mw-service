@@ -214,6 +214,12 @@ function search(defaultContentTypes, req, response, objectType) {
     }
   ]);
 }
+
+function shouldDoFrameworkRead(filters) {
+    return (
+      filters.se_boards || filters.se_mediums || filters.se_gradeLevels
+    );
+  }
 // Helper function to perform framework read and prepare request data
 function performFrameworkRead(req, response, rspObj, data, defaultContentTypes, objectType) {
   getFrameworkDetails(req, function (err, frameworkData) {
